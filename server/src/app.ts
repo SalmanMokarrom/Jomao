@@ -1,6 +1,22 @@
-import express from "express"
+/* 
+Project Name: Jomao 1.0.0
+Author: Salman Mokarrom
+Date: 1 - 11 - 2026 - Library of ITU
+*/
+
+// install Dependencies
+
+import express from "express";
+import errorHandler from "./middleware/errorHandler";
+import userHandler from "./routes/userHandler"
+import goalHandler from "./routes/goalHandler"
+
+
+// Initialize App Object
 
 const app = express()
+
+// Middlewares
 
 app.use(express.json())
 app.get("/health",(req,res)=>{
@@ -9,6 +25,17 @@ app.get("/health",(req,res)=>{
         message: "Jomao API is running"
     })
 })
+// User signup and Login
+app.use("/user", userHandler)
+
+// Goal CRUD with validation, Authentication and Authorization
+app.use("/goal", goalHandler)
+
+
+// Default Error Handling Middleware
+app.use(errorHandler)
+
+
 
 export default app;
 
