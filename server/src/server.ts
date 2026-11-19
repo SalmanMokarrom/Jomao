@@ -15,7 +15,7 @@ async function startServer():Promise <void>{
     } catch(error){
         console.error("Failed To Start Jomao API", error)
         process.exit(1)
-    }
+    } 
 
 }
 

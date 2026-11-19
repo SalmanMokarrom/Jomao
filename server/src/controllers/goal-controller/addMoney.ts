@@ -6,9 +6,15 @@ import { mongoIdSchema } from "../../utilities/common.validator";
 import { type Request, type Response } from "express";
 
 export default async function addMoney(req: Request, res: Response) {
-  const session = await mongoose.startSession();
+  let session: mongoose.ClientSession | undefined;
+
+  let userId: string | undefined;
+  let goalId: string | undefined;
+  let amount: number | undefined;
+  let idempotencyKey: string | undefined;
 
   try {
+    // 1. Validate goal ID
     const result = mongoIdSchema.safeParse(req.params.goalId);
 
     if (!result.success) {
@@ -18,25 +24,40 @@ export default async function addMoney(req: Request, res: Response) {
       });
     }
 
-    const { amount, idempotencyKey } = req.body;
-    const userId = req.user!.userId;
-    const goalId = result.data;
+    // 2. Get request data
+    const { amount: depositAmount, idempotencyKey: key } = req.body;
 
-    // 1. Check for an already processed deposit
+    userId = req.user!.userId;
+    goalId = result.data;
+    amount = depositAmount;
+    idempotencyKey = key;
+
+    // 3. Validate idempotency key
+    if (
+      typeof idempotencyKey !== "string" ||
+      !idempotencyKey.trim()
+    ) {
+      return res.status(400).json({
+        status: "failed",
+        message: "Idempotency key is required"
+      });
+    }
+
+    // 4. Check for an already processed deposit
     const existingTransaction = await Transaction.findOne({
       user: userId,
       idempotencyKey
     });
 
     if (existingTransaction) {
-      // Prevent reusing the same key for a different deposit
       if (
         existingTransaction.goal.toString() !== goalId ||
-        existingTransaction.amount !== amount
+        existingTransaction.amount !== amount ||
+        existingTransaction.type !== "deposit"
       ) {
         return res.status(409).json({
           status: "failed",
-          message: "Idempotency key was already used for another deposit"
+          message: "Idempotency key was already used for another operation"
         });
       }
 
@@ -47,11 +68,13 @@ export default async function addMoney(req: Request, res: Response) {
       });
     }
 
-    let updatedGoal;
+    // 5. Start database session
+    session = await mongoose.startSession();
 
-    // 2. Update goal and create transaction atomically
-    await session.withTransaction(async () => {
-      updatedGoal = await Goal.findOneAndUpdate(
+    // 6. Update goal and create transaction atomically
+    const updatedGoal = await session.withTransaction(async () => {
+
+      const goal = await Goal.findOneAndUpdate(
         {
           _id: goalId,
           user: userId,
@@ -61,7 +84,10 @@ export default async function addMoney(req: Request, res: Response) {
           {
             $set: {
               currentAmount: {
-                $add: ["$currentAmount", amount]
+                $add: [
+                  { $ifNull: ["$currentAmount", 0] },
+                  amount
+                ]
               }
             }
           },
@@ -78,14 +104,14 @@ export default async function addMoney(req: Request, res: Response) {
           }
         ],
         {
-          returnDocument:"after",
+          returnDocument: "after",
           session,
           updatePipeline: true
         }
       );
 
-      if (!updatedGoal) {
-        throw new Error("Goal not found or is no longer active");
+      if (!goal) {
+        throw new Error("GOAL_NOT_FOUND");
       }
 
       await Transaction.create(
@@ -98,42 +124,62 @@ export default async function addMoney(req: Request, res: Response) {
         }],
         { session }
       );
+
+      return goal;
     });
 
+    // 7. Success response
     return res.status(200).json({
       status: "success",
       message: "Deposit recorded successfully",
       goal: updatedGoal
     });
 
-  } catch (err: any) {
-    // 3. Handle concurrent duplicate requests
-    if (err.code === 11000) {
-      const existingTransaction = await Transaction.findOne({
-        user: req.user!.userId,
-        idempotencyKey: req.body.idempotencyKey
-      });
+  } catch (error: any) {
 
-      if (existingTransaction) {
-        if (
-          existingTransaction.goal.toString() === req.params.goalId &&
-          existingTransaction.amount === req.body.amount
-        ) {
-          return res.status(200).json({
-            status: "success",
-            message: "Deposit already processed",
-            transaction: existingTransaction
+    // 8. Recover from duplicate/concurrent requests
+    if (userId && goalId && idempotencyKey) {
+      try {
+        const existingTransaction = await Transaction.findOne({
+          user: userId,
+          idempotencyKey
+        });
+
+        if (existingTransaction) {
+          if (
+            existingTransaction.goal.toString() === goalId &&
+            existingTransaction.amount === amount &&
+            existingTransaction.type === "deposit"
+          ) {
+            return res.status(200).json({
+              status: "success",
+              message: "Deposit already processed",
+              transaction: existingTransaction
+            });
+          }
+
+          return res.status(409).json({
+            status: "failed",
+            message: "Idempotency key was already used for another operation"
           });
         }
-
-        return res.status(409).json({
-          status: "failed",
-          message: "Idempotency key was already used for another deposit"
-        });
+      } catch (lookupError) {
+        console.error("Idempotency recovery error:", lookupError);
       }
     }
 
-    console.error(err);
+    // 9. Handle unavailable or ineligible goal
+    if (
+      error instanceof Error &&
+      error.message === "GOAL_NOT_FOUND"
+    ) {
+      return res.status(404).json({
+        status: "failed",
+        message: "Goal not found or is no longer active"
+      });
+    }
+
+    console.error("Deposit error:", error);
 
     return res.status(500).json({
       status: "failed",
@@ -141,6 +187,6 @@ export default async function addMoney(req: Request, res: Response) {
     });
 
   } finally {
-    await session.endSession();
+    await session?.endSession();
   }
 }

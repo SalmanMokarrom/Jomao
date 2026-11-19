@@ -11,7 +11,7 @@ import mongoose, {Types, Schema} from "mongoose"
 interface Itransaction{
     user:Types.ObjectId,
     goal:Types.ObjectId,
-    type: "deposit",
+    type: "deposit" | "withdraw",
     amount: number,
     idempotencyKey: string
 }
@@ -30,7 +30,7 @@ const TransactionSchema = new mongoose.Schema<Itransaction>({
     type:{
         type: String,
         required:true,
-        enum:["deposit"]
+        enum:["deposit", "withdraw"]
     },
     amount:{
         type:Number,

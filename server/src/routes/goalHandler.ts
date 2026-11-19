@@ -16,6 +16,7 @@ import getAGoal from "../controllers/goal-controller/getAGoal";
 import depositSchema from "../schemas/validation-schema/goal-schema/validate.transaction.schema";
 import addMoney from "../controllers/goal-controller/addMoney";
 import getTransactions from "../controllers/goal-controller/getTransactions";
+import withdrawMoney from "../controllers/goal-controller/withdrawMoney";
 
 // Initiate Route 
 const router = express.Router()
@@ -34,6 +35,9 @@ router.post("/deposit/:goalId", checkLogin,validateRequest(depositSchema), addMo
 
 // get all the transaction
 router.get("/transactions/:goalId",checkLogin, getTransactions)
+
+// withdraw money
+router.get("/withdraw/:goalId", checkLogin, withdrawMoney)
 
 // export
 export default router;
