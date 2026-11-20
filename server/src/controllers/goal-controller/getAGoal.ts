@@ -29,9 +29,12 @@ export default async function getAGoal(req: Request, res:Response){
         status: "failed",
         message: "Goal not found"
         })}
+            const progressPercentage =(goal.currentAmount / goal.targetAmount) * 100;
+    
         return res.status(200).json({
         status: "success",
-        goal
+        goal,
+        progressPercentage: `${progressPercentage}%`
         });
     }catch(err){
         res.status(500).json({
